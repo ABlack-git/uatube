@@ -1,0 +1,13 @@
+version: '3'
+services:
+  mongo-service:
+    container_name: uatube-mongo
+    image: mongo
+    ports:
+      - 51999:27017
+    volumes:
+      - "uatube-mongo:/data/db"
+
+volumes:
+  uatube-mongo:
+    driver: local
