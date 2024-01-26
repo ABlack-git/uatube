@@ -1,7 +1,16 @@
+import math
 import typing as t
 from dataclasses import dataclass
 from datetime import datetime
 from googleapiclient.errors import HttpError
+
+
+@dataclass
+class Meta:
+    prev_page_token: str | None
+    next_page_token: str | None
+    total_results: int
+    results_per_page: int
 
 
 @dataclass
@@ -29,12 +38,12 @@ class SubscriptionDto:
     channel_title: str
 
 
-def get_channel_video_ids(youtube, channel_id) -> t.List[str]:
+def get_channel_video_ids(youtube, channel_id, max_results=50) -> t.List[str]:
     response = youtube.search().list(
         part='id',
         channelId=channel_id,
         type='video',
-        maxResults=10,
+        maxResults=max_results,
         order='date'
     ).execute()
 
@@ -68,42 +77,84 @@ def get_comments_for_video(youtube, video_id) -> t.List[CommentDto]:
     return comments
 
 
-def get_channel_subscriptions(youtube, channel_id) -> t.Optional[t.List[SubscriptionDto]]:
-    params = {"channelId": channel_id, "part": 'snippet', "maxResults": 50}
-    subscriptions = []
+def get_channel_subscriptions(
+        youtube,
+        channel_id,
+        next_page_token=None) -> t.Tuple[t.Optional[t.List[SubscriptionDto]], t.Optional[Meta]]:
     try:
-        for response_page in _paginator(youtube.subscriptions, params):
-            for item in response_page['items']:
-                snippet = item['snippet']
-                subscription = SubscriptionDto(
-                    subscription_id=item['id'],
-                    subscriber_id=channel_id,
-                    published_at=str_to_datetime(snippet['publishedAt']),
-                    channel_id=snippet['resourceId']['channelId'],
-                    channel_title=snippet.get('title')
-                )
-                subscriptions.append(subscription)
-        return subscriptions
-    except HttpError:
-        return None
+        response = youtube.subscriptions().list(channelId=channel_id, part='snippet', maxResults=50,
+                                                pageToken=next_page_token).execute()
+    except HttpError as e:
+        if e.error_details[0]['reason'] in ('subscriptionForbidden', 'accountClosed', 'accountSuspended'):
+            return None, None
+        raise e
+
+    page_info = response.get('pageInfo')
+    meta = Meta(
+        prev_page_token=response.get('prevPageToken'),
+        next_page_token=response.get('nextPageToken'),
+        total_results=None if page_info is None else page_info.get('totalResults'),
+        results_per_page=None if page_info is None else page_info.get('resultsPerPage')
+    )
+
+    subscriptions = []
+    for item in response['items']:
+        snippet = item['snippet']
+        subscription = SubscriptionDto(
+            subscription_id=item['id'],
+            subscriber_id=channel_id,
+            published_at=str_to_datetime(snippet['publishedAt']),
+            channel_id=snippet['resourceId']['channelId'],
+            channel_title=snippet.get('title')
+        )
+        subscriptions.append(subscription)
+
+    return subscriptions, meta
 
 
 def get_channel_info(youtube, channel_id):
     pass
 
 
-def _paginator(func: t.Callable, params: dict):
-    response = func().list(
-        **params
-    ).execute()
-    yield response
+class Paginator:
+    def __init__(self, func, start_page_token, **kwargs):
+        self.func = func
+        self.next_page_token = start_page_token
+        self.kwargs = kwargs
+        self.len = None
+        self.index = 0
 
-    while next_page_token := response.get('nextPageToken'):
-        response = func().list(
-            **params,
-            pageToken=next_page_token
-        ).execute()
-        yield response
+        self.resp = None
+        self.meta = None
+        self.return_cached = False
+
+    def __len__(self):
+        if self.len is None:
+            _, meta = next(self)
+            self.return_cached = True
+            if meta is None:
+                self.len = 0
+                return self.len
+            self.len = math.ceil(meta.total_results / meta.results_per_page)
+
+        return self.len
+
+    def __next__(self):
+        if self.len is not None and self.index >= self.len:
+            raise StopIteration
+
+        if self.return_cached:
+            self.return_cached = False
+        else:
+            self.resp, self.meta = self.func(**self.kwargs, next_page_token=self.next_page_token)
+            if self.meta is not None:
+                self.next_page_token = self.meta.next_page_token
+            self.index += 1
+
+        return self.resp, self.meta
+
+    def __iter__(self):
+        return self
 
 
 def str_to_datetime(dt_str: str):

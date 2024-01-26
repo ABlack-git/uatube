@@ -1,3 +1,6 @@
 .venv
 **/__pycache__/**
 .idea
+coocurence_graph.json
+dump
+.ipynb_checkpoints

@@ -1,4 +1,5 @@
 import mongoengine as mongoe
+import datetime as dt
 from dataclasses import asdict
 from uatube.scraper.client import SubscriptionDto, CommentDto
 
@@ -54,6 +55,17 @@ class Channel(mongoe.Document):
     channel_display_name = mongoe.StringField()
     channel_url = mongoe.URLField()
     from_subscriptions = mongoe.BooleanField(default=False)
+    found_from_channel = mongoe.ListField(mongoe.StringField())
     details = mongoe.EmbeddedDocumentField(ChannelDetails, required=False)
-
+    has_opened_subscriptions = mongoe.BooleanField(default=False)
     meta = {"collection": "Channels"}
+
+
+class SubscriptionCheckpoint(mongoe.Document):
+    channel_id = mongoe.StringField()
+    channel_order = mongoe.IntField()
+    next_page_token = mongoe.StringField()
+    has_next_page = mongoe.BooleanField()
+    run_id = mongoe.StringField()
+    created_at = mongoe.DateTimeField(default=dt.datetime.utcnow)
+    meta = {"collection": "SubscriptionCheckpoint"}
